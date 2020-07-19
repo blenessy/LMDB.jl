@@ -55,6 +55,9 @@ module LMDB_DBI
                     value = get(txn, dbi, k, Vector{Int})
                     println("Got value for key $(k): $(value)")
                     @test value == [key, key+1, key+2]
+
+                    st = dbstat(txn, dbi)
+                    @test st.entries == 2
                 end
                 abort(txn)
             end

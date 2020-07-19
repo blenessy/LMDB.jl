@@ -15,14 +15,16 @@ module LMDB
 
     export Environment, create, open, close, sync, set!, unset!, getindex, setindex!, path, info, show,
            Transaction, start, abort, commit, reset, renew, environment,
-           DBI, drop, delete!, keys, get, put!,
+           DBI, drop, delete!, keys, get, put!, dbstat,
            Cursor, count, transaction, database,
            isflagset, isopen,
-           LMDBError, CursorOps
+           LMDBError, CursorOps,
+           ThreadSafePersistentDict
 
     include("common.jl")
     include("env.jl")
     include("txn.jl")
     include("dbi.jl")
     include("cur.jl")
+    include("dict.jl")
 end

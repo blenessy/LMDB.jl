@@ -1,1 +1,5 @@
-deps/deps.jl
+deps/*
+!deps/build.jl
+Manifest.toml
+*.lmdb
+*.lmdb-lock

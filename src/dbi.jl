@@ -112,3 +112,24 @@ function get(txn::Transaction, dbi::DBI, key, ::Type{T}) where T
     # Convert to proper type
     return convert(T, mdb_val_ref)
 end
+
+mutable struct Stat
+    psize::Cuint
+    depth::Cuint
+    branch_pages::Csize_t
+    leaf_pages::Csize_t
+    overflow_pages::Csize_t
+    entries::Csize_t
+    Stat() = new(zero(Cuint), zero(Cuint), zero(Csize_t), zero(Csize_t), zero(Csize_t), zero(Csize_t))
+end
+
+"Retrieve statistics for a database"
+function dbstat(txn::Transaction, dbi::DBI)
+    # Setup parameters
+    ref = Ref(Stat())
+    ret = ccall((:mdb_stat, liblmdb), Cint,
+                 (Ptr{Nothing}, Cuint, Ptr{Stat}),
+                 txn.handle, dbi.handle, ref)
+    (ret != 0) && throw(LMDBError(ret))
+    return ref[]
+end
