@@ -10,6 +10,8 @@ end
 "Check if database is open"
 isopen(dbi::DBI) = dbi.handle != zero(Cuint)
 
+
+
 "Open a database in the environment"
 function open(txn::Transaction, dbname::String = ""; flags::Cuint = zero(Cuint))
     cdbname = length(dbname) > 0 ? dbname : convert(Cstring, Ptr{UInt8}(C_NULL))

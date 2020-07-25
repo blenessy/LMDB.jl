@@ -3,8 +3,9 @@ const DEFAULT_NAME = "lmdb"
 mutable struct ThreadSafePersistentDict{K,V} <: AbstractDict{K,V} 
     env::Environment
     rotxn::Vector{Transaction}
+    wlock::ReentrantLock
     function ThreadSafePersistentDict{K,V}(path; mapsize=10485760, maxreaders=Threads.nthreads()) where {K,V}
-        env, rotxn, rodbi = create(), Vector{Transaction}(), Vector{DBI}()
+        env, rotxn = create(), Vector{Transaction}()
         try
             env[:MapSize] = mapsize
             open(env, path, flags=Cuint(LMDB.NOSUBDIR))
@@ -21,13 +22,8 @@ mutable struct ThreadSafePersistentDict{K,V} <: AbstractDict{K,V}
             close(env)
             rethrow(e)
         end
-        dict = new{K,V}(env, rotxn)
-        finalizer(dict) do d
-            for txn in d.rotxn
-                txn.handle == C_NULL || abort(txn)
-            end
-            d.env.handle == C_NULL || close(d.env)
-        end
+        dict = new{K,V}(env, rotxn, ReentrantLock())
+        finalizer(close, dict)
         return dict
     return 
     end
@@ -61,13 +57,17 @@ function Base.get(dict::ThreadSafePersistentDict{K,V}, key::K, default) where {K
 end
 
 function Base.setindex!(dict::ThreadSafePersistentDict{K,V}, val::V, key::K) where {K,V}
-    txn = start(dict.env)
+    txn = nothing
+    lock(dict.wlock)
     try
+        txn = start(dict.env, flags=Cuint(LMDB.NOLOCK))
         put!(txn, open(txn), key, val)
         commit(txn)
     catch e
-        abort(txn)
+        isnothing(txn) == false || abort(txn)
         rethrow(e)
+    finally
+        unlock(dict.wlock)
     end  
     return val
 end
@@ -136,4 +136,9 @@ function Base.length(dict::ThreadSafePersistentDict)
     end
 end
 
-Base.close(dict::ThreadSafePersistentDict) = close(dict.env)
+function Base.close(dict::ThreadSafePersistentDict)
+    for txn in dict.rotxn
+        isopen(txn) == false || abort(txn)
+    end    
+    isopen(dict.env) == false || close(dict.env)
+end

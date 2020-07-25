@@ -29,7 +29,12 @@ function bench_write(n, ks, vs; name=TESTDB)
     rm(name, force=true, recursive=true)
     dict = ThreadSafePersistentDict{Vector{UInt8},Vector{UInt8}}(TESTDB, mapsize=1073741824)
     try
-        @btime ($dict[key] = val) setup=(key=rand($keys); val=rand(UInt8, $vs))
+        for k in keys
+            dict[k] = rand(UInt8, vs)
+        end
+        Threads.@threads for _ in 1:Threads.nthreads()
+            @btime ($dict[key] = val) setup=(key=rand($keys); val=rand(UInt8, $vs))
+        end        
     finally
         close(dict)
     end
@@ -65,12 +70,12 @@ function bench_length(n, ks, vs; name=TESTDB)
     end
 end
 
-#bench_length(1000, 64, 1024)
-#bench_collect(1000, 64, 1024)
-#bench_write(1000, 64, 1024)
+bench_length(1000, 64, 1024)
+bench_collect(1000, 64, 1024)
+bench_write(1000, 64, 1024)
 bench_read(1000, 64, 1024)
 
-#bench_length(10000, 64, 1024)
-#bench_collect(10000, 64, 1024)
-#bench_write(10000, 64, 1024)
-#bench_read(10000, 64, 1024)
+bench_length(10000, 64, 1024)
+bench_collect(10000, 64, 1024)
+bench_write(10000, 64, 1024)
+bench_read(10000, 64, 1024)
