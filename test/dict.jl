@@ -2,7 +2,7 @@ module LMDB_Dict
     using LMDB
     using Test
     
-    rm("LMDB_Dict", force=true)
+    rm("test.lmdb", force=true)
     dict = ThreadSafePersistentDict{String,String}("test.lmdb")
 
     # default works if key is not found

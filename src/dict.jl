@@ -2,15 +2,34 @@ const DEFAULT_NAME = "lmdb"
 
 mutable struct ThreadSafePersistentDict{K,V} <: AbstractDict{K,V} 
     env::Environment
+    rotxn::Vector{Transaction}
     function ThreadSafePersistentDict{K,V}(path; mapsize=10485760, maxreaders=Threads.nthreads()) where {K,V}
-        env = create()
-        env[:MapSize] = mapsize
-        flags = Cuint(LMDB.NOSUBDIR)
-        open(env, path, flags=flags)
-        finalizer(env) do env
-            env.handle == C_NULL || close(env)
+        env, rotxn, rodbi = create(), Vector{Transaction}(), Vector{DBI}()
+        try
+            env[:MapSize] = mapsize
+            open(env, path, flags=Cuint(LMDB.NOSUBDIR))
+            for i in 1:Threads.nthreads()
+                # allocate tranaction handle for each thread
+                txn = start(env, flags=(Cuint(LMDB.RDONLY) | Cuint(LMDB.NOTLS)))
+                reset(txn)  # close the transaction but keep the handle it can be renewed later
+                push!(rotxn, txn)
+            end
+        catch e
+            for txn in rotxn
+                abort(txn)
+            end
+            close(env)
+            rethrow(e)
         end
-        return new{K,V}(env)
+        dict = new{K,V}(env, rotxn)
+        finalizer(dict) do d
+            for txn in d.rotxn
+                txn.handle == C_NULL || abort(txn)
+            end
+            d.env.handle == C_NULL || close(d.env)
+        end
+        return dict
+    return 
     end
 end
 
@@ -27,16 +46,17 @@ function Base.getindex(dict::ThreadSafePersistentDict{K,V}, key::K) where {K,V}
 end
 
 function Base.get(dict::ThreadSafePersistentDict{K,V}, key::K, default) where {K,V}
-    txn = start(dict.env, flags=Cuint(LMDB.RDONLY))
+    rotxn = dict.rotxn[Threads.threadid()]
     try
-        return get(txn, open(txn), key, V)
+        renew(rotxn)
+        return get(rotxn, open(rotxn), key, V)
     catch e
         if e isa LMDBError && e.code == -30798 # MDB_NOTFOUND
             return default
         end
         rethrow(e)
     finally
-        abort(txn)
+        reset(rotxn)
     end
 end
 

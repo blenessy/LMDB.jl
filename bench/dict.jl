@@ -65,12 +65,12 @@ function bench_length(n, ks, vs; name=TESTDB)
     end
 end
 
-bench_length(1000, 64, 1024)
-bench_collect(1000, 64, 1024)
-bench_write(1000, 64, 1024)
+#bench_length(1000, 64, 1024)
+#bench_collect(1000, 64, 1024)
+#bench_write(1000, 64, 1024)
 bench_read(1000, 64, 1024)
 
-bench_length(10000, 64, 1024)
-bench_collect(10000, 64, 1024)
-bench_write(10000, 64, 1024)
-bench_read(10000, 64, 1024)
+#bench_length(10000, 64, 1024)
+#bench_collect(10000, 64, 1024)
+#bench_write(10000, 64, 1024)
+#bench_read(10000, 64, 1024)
