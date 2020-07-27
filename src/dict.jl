@@ -42,12 +42,13 @@ function Base.getindex(dict::ThreadSafePersistentDict{K,V}, key::K) where {K,V}
 end
 
 function Base.get(dict::ThreadSafePersistentDict{K,V}, key::K, default) where {K,V}
+    NOTFOUND::Cint = -30798
     rotxn = dict.rotxn[Threads.threadid()]
     try
         renew(rotxn)
         return get(rotxn, open(rotxn), key, V)
     catch e
-        if e isa LMDBError && e.code == -30798 # MDB_NOTFOUND
+        if e isa LMDBError && e.code == NOTFOUND # MDB_NOTFOUND
             return default
         end
         rethrow(e)
@@ -72,63 +73,74 @@ function Base.setindex!(dict::ThreadSafePersistentDict{K,V}, val::V, key::K) whe
     return val
 end
 
-"Iterate over key/values"
-function _iterate(cur::Cursor, op, ::Type{K}, ::Type{V}) where {K,V}
-    # Setup parameters
-    mdb_key_ref = Ref(MDBValue())
-    mdb_val_ref = Ref(MDBValue())
-    ret = ccall( (:mdb_cursor_get, liblmdb), Cint,
-               (Ptr{Nothing}, Ptr{MDBValue}, Ptr{MDBValue}, Cint),
-                cur.handle, mdb_key_ref, mdb_val_ref, Cint(op))
-    if ret == 0
-        # Convert to proper type
-        return convert(K, mdb_key_ref) => convert(V, mdb_val_ref)
-    else
-        ret != -30798 || return nothing
-        throw(LMDBError(ret))
-    end
+mutable struct PairsIterator{K,V}
+   txn::Transaction
+   cur::Cursor
+   function PairsIterator(::Type{K}, ::Type{V}, env::Environment) where {K,V}
+        txn = start(env, flags=(Cuint(LMDB.RDONLY) | Cuint(LMDB.NOTLS)))
+        try
+            iter = new{K,V}(txn, open(txn, open(txn)))
+            finalizer(close, iter)  # close lazily
+            return iter
+        catch e
+            abort(txn)
+            rethrow(e)
+        end
+   end
 end
 
-function Base.iterate(dict::ThreadSafePersistentDict{K,V}) where {K,V}
-    txn = start(dict.env, flags=Cuint(LMDB.RDONLY))
-    cur = Cursor(C_NULL)
-    cleanup = true
-    try
-        cur = open(txn, open(txn))
-        val = _iterate(cur, FIRST, K, V)
-        if !isnothing(val)
-            finalizer(cur) do c
-                c.handle != C_NULL || return
-                let txn = transaction(c)
-                    close(c)
-                    abort(txn)
-                end
-            end
-            cleanup = false
-            return (val, cur) # NOTE: cursor and txn still open
-        end
-    catch e
-        rethrow(e)
-    finally
-        if cleanup
-            cur.handle == C_NULL || close(cur)
-            abort(txn)
-        end
-    end
-    return nothing
+function Base.close(iter::PairsIterator)
+    isopen(iter.cur) == false || close(iter.cur)
+    isopen(iter.txn) == false || abort(iter.txn)
 end
-function Base.iterate(::ThreadSafePersistentDict{K,V}, cur::Cursor) where {K,V}
-    val = _iterate(cur, NEXT, K, V)
-    isnothing(val) || return (val, cur)
-    let txn = transaction(cur)
-        close(cur)
-        abort(txn)
+
+function mdb_cursor_get!(iter::PairsIterator, op::Cint)
+    NOTFOUND::Cint = -30798
+    mdb_key_ref = Ref(MDBValue())
+    mdb_val_ref = Ref(MDBValue())
+    ret = ccall((:mdb_cursor_get, liblmdb), Cint, (Ptr{Nothing}, Ptr{MDBValue}, Ptr{MDBValue}, Cint),
+                iter.cur.handle, mdb_key_ref, mdb_val_ref, op)
+    iszero(ret) == false || return (mdb_key_ref[], mdb_val_ref[])
+    if ret == NOTFOUND
+        close(iter)  # eagerly close
+        return nothing
+    elseif !iszero(ret)
+        throw(LMDBError(ret))
     end
-    return nothing
+
+end
+
+function Base.iterate(iter::PairsIterator{K,Nothing}, first=true) where {K}
+    kv = mdb_cursor_get!(iter, Cint(first ? FIRST : NEXT))
+    return isnothing(kv) ? nothing : (convert(K, Ref(kv[1])), false)
+end
+
+function Base.iterate(iter::PairsIterator{Nothing,V}, first=true) where {V}
+    kv = mdb_cursor_get!(iter, Cint(first ? FIRST : NEXT))
+    return isnothing(kv) ? nothing : (convert(V, Ref(kv[2])), false)
+end
+
+function Base.iterate(iter::PairsIterator{K,V}, first=true) where {K,V}
+    kv = mdb_cursor_get!(iter, Cint(first ? FIRST : NEXT))
+    return isnothing(kv) ? nothing : (convert(K, Ref(kv[1])) => convert(V, Ref(kv[2])), false)
+end
+
+Base.IteratorSize(::PairsIterator) = Base.SizeUnknown() # might change during iteration so we do not return static length
+Base.IteratorSize(::ThreadSafePersistentDict) = Base.SizeUnknown() # might change during iteration so we do not return static length
+Base.eltype(iter::PairsIterator{K,Nothing}) where {K,V} = K
+Base.eltype(iter::PairsIterator{Nothing,V}) where {K,V} = V
+Base.eltype(iter::PairsIterator{K,V}) where {K,V} = Pair{K,V}
+
+Base.keys(dict::ThreadSafePersistentDict{K,V}) where {K,V} = PairsIterator(K, Nothing, dict.env)
+Base.values(dict::ThreadSafePersistentDict{K,V}) where {K,V} = PairsIterator(Nothing, V, dict.env)
+function Base.iterate(dict::ThreadSafePersistentDict{K,V}, state=nothing) where {K,V}
+    iter = isnothing(state) ? PairsIterator(K, V, dict.env) : state
+    next = iterate(iter, isnothing(state))
+    return isnothing(next) ? nothing : (next[1], iter)
 end
 
 function Base.length(dict::ThreadSafePersistentDict)
-    txn = start(dict.env, flags=Cuint(LMDB.RDONLY))
+    txn = start(dict.env, flags=(Cuint(LMDB.RDONLY) | Cuint(LMDB.NOTLS)))
     try
         return Int(dbstat(txn, open(txn)).entries)
     finally

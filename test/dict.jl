@@ -21,6 +21,9 @@ module LMDB_Dict
 
     dict["bar"] = "baz"
     @test collect(dict) == ["bar" => "baz", "foo" => "baz"]
+    @test collect(keys(dict)) == ["bar", "foo"]
+    @test collect(values(dict)) == ["baz", "baz"]
+    @test eltype(dict) == Pair{String,String}
 
     #dict = ThreadSafePersistentDict("foo" => 1, "bar" => 2)
 end
