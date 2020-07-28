@@ -8,10 +8,10 @@ mutable struct ThreadSafePersistentDict{K,V} <: AbstractDict{K,V}
         env, rotxn = create(), Vector{Transaction}()
         try
             env[:MapSize] = mapsize
-            open(env, path, flags=Cuint(LMDB.NOSUBDIR))
+            open(env, path, flags=(Cuint(LMDB.NOSUBDIR) | Cuint(LMDB.NOTLS)))
             for i in 1:Threads.nthreads()
                 # allocate tranaction handle for each thread
-                txn = start(env, flags=(Cuint(LMDB.RDONLY) | Cuint(LMDB.NOTLS)))
+                txn = start(env, flags=Cuint(LMDB.RDONLY))
                 reset(txn)  # close the transaction but keep the handle it can be renewed later
                 push!(rotxn, txn)
             end
@@ -61,7 +61,7 @@ function Base.setindex!(dict::ThreadSafePersistentDict{K,V}, val::V, key::K) whe
     txn = nothing
     lock(dict.wlock)
     try
-        txn = start(dict.env, flags=Cuint(LMDB.NOLOCK))
+        txn = start(dict.env)
         put!(txn, open(txn), key, val)
         commit(txn)
     catch e
@@ -77,7 +77,7 @@ mutable struct PairsIterator{K,V}
    txn::Transaction
    cur::Cursor
    function PairsIterator(::Type{K}, ::Type{V}, env::Environment) where {K,V}
-        txn = start(env, flags=(Cuint(LMDB.RDONLY) | Cuint(LMDB.NOTLS)))
+        txn = start(env, flags=Cuint(LMDB.RDONLY))
         try
             iter = new{K,V}(txn, open(txn, open(txn)))
             finalizer(close, iter)  # close lazily
