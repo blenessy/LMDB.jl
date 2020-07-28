@@ -10,12 +10,13 @@ function bench_read(n, ks, vs; name=TESTDB)
     @info "== Randomly reading $n different keys with key size $ks bytes and data size $vs bytes =="
     rm(name, force=true, recursive=true)
     dict = ThreadSafePersistentDict{Vector{UInt8},Vector{UInt8}}(name, mapsize=1073741824)
+    randkeys = [rand(UInt8, ks) for _ in 1:n]
     try
-        for k in [rand(UInt8, ks) for _ in 1:n]
+        for k in randkeys
             dict[k] = rand(UInt8, vs)
         end
         Threads.@threads for _ in 1:Threads.nthreads()
-            @btime ($dict[key]) setup=(key=rand($keys))
+            @btime ($dict[key]) setup=(key=rand($randkeys))
         end
     finally
         close(dict)
@@ -26,12 +27,13 @@ function bench_write(n, ks, vs; name=TESTDB)
     @info "== Randomly writing/updating $n different keys with key size $ks bytes and data size $vs bytes =="
     rm(name, force=true, recursive=true)
     dict = ThreadSafePersistentDict{Vector{UInt8},Vector{UInt8}}(name, mapsize=1073741824)
+    randkeys = [rand(UInt8, ks) for _ in 1:n]
     try
-        for k in [rand(UInt8, ks) for _ in 1:n]
+        for k in randkeys
             dict[k] = rand(UInt8, vs)
         end
         Threads.@threads for _ in 1:Threads.nthreads()
-            @btime ($dict[key] = val) setup=(key=rand($keys); val=rand(UInt8, $vs))
+            @btime ($dict[key] = val) setup=(key=rand($randkeys); val=rand(UInt8, $vs))
         end        
     finally
         close(dict)

@@ -140,11 +140,12 @@ function Base.iterate(dict::ThreadSafePersistentDict{K,V}, state=nothing) where 
 end
 
 function Base.length(dict::ThreadSafePersistentDict)
-    txn = start(dict.env, flags=(Cuint(LMDB.RDONLY) | Cuint(LMDB.NOTLS)))
+    txn = dict.rotxn[Threads.threadid()]
     try
-        return Int(dbstat(txn, open(txn)).entries)
+        renew(txn)
+        return convert(Int, dbstat(txn, open(txn)).entries)
     finally
-        abort(txn)
+        reset(txn)
     end
 end
 
